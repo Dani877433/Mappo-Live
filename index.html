@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mappo · Posizione condivisa</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#f4f7f6;color:#19342d;margin:0}
+main{max-width:680px;margin:auto;padding:20px}h1{font-size:1.5rem}
+#map{height:58vh;min-height:300px;border-radius:14px;background:#dde6e1}
+#status{padding:14px 0;line-height:1.5}.warning{color:#a35a16}
+footer{font-size:.85rem;color:#596c66;margin-top:16px}
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzxZalI7oLh4O1OHJgqB+lw=" crossorigin="">
+</head><body><main><h1>📍 Mappo · Posizione condivisa</h1>
+<p>Solo l'ultima posizione, nessuna traccia del percorso.</p>
+<div id="status" role="status">Connessione in corso…</div><div id="map"></div>
+<footer>Posizione indicativa: non sostituisce i servizi di emergenza. Se il segnale manca, controlla l'ora dell'ultimo aggiornamento.</footer>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script type="module">
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
+import {getAuth,signInAnonymously} from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js';
+import {getFirestore,doc,onSnapshot} from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
+import {firebaseConfig} from './config.js';
+const status=document.getElementById('status');
+const id=new URLSearchParams(location.search).get('s');
+if(!id||!/^[a-f0-9]{48}$/.test(id)){status.textContent='Link non valido.';throw Error('Invalid session ID')}
+const app=initializeApp(firebaseConfig);
+const map=L.map('map').setView([0,0],2);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+let marker=null,ring=null,lastData=null;
+function clearPosition(){if(marker){map.removeLayer(marker);marker=null}if(ring){map.removeLayer(ring);ring=null}}
+function showUnavailable(message){clearPosition();status.className='warning';status.textContent=message;}
+function display(data){
+ lastData=data;
+ const expiry=data.expiresAt?.toMillis?.()||0;
+ if(!data.active||expiry<=Date.now()){showUnavailable('Condivisione scaduta o interrotta.');return}
+ if(!data.hasFix){showUnavailable('In attesa di una posizione GPS affidabile…');return}
+ const age=Date.now()-(data.updatedAt?.toMillis?.()||0);
+ const timestamp=data.updatedAt?.toMillis?.();
+ if(!timestamp){showUnavailable('Data GPS non disponibile.');return}
+ const when=new Date(timestamp).toLocaleString('it-IT');
+ const accuracy=Number(data.accuracyMeters)||0;
+ const stale=age>90000;
+ status.className=stale?'warning':'';
+ status.textContent=(stale?'⚠️ Posizione non aggiornata. Ultimo dato: ':'Ultima posizione: ')+when+' · precisione ±'+Math.round(accuracy)+' m';
+ const pos=[data.latitude,data.longitude];
+ if(!Number.isFinite(pos[0])||!Number.isFinite(pos[1])){showUnavailable('Coordinate GPS non valide.');return}
+ if(!marker){marker=L.marker(pos).addTo(map);ring=L.circle(pos,{radius:accuracy,color:'#2e7461',fillOpacity:.1}).addTo(map);map.setView(pos,15)}
+ else{marker.setLatLng(pos);ring.setLatLng(pos).setRadius(accuracy)}
+}
+try{
+ await signInAnonymously(getAuth(app));
+ onSnapshot(doc(getFirestore(app),'liveSessions',id),
+   snapshot=>{if(!snapshot.exists()){lastData=null;showUnavailable('Condivisione terminata o link non valido.');return}display(snapshot.data())},
+   ()=>{lastData=null;showUnavailable('Posizione non disponibile. Controlla il link o riprova.')});
+ setInterval(()=>{if(lastData)display(lastData)},30000);
+}catch(e){showUnavailable('Impossibile collegarsi a Firebase.')}
+</script></body></html>
