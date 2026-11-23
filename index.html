@@ -39,38 +39,57 @@ if(!id||!/^[a-f0-9]{48}$/.test(id)){status.textContent='Link non valido.';throw 
 const app=initializeApp(firebaseConfig);
 const map=L.map('map').setView([0,0],2);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
-let marker=null,ring=null,lastData=null;
+let marker=null,ring=null,lastData=null,hasCenteredOnPosition=false;
 window.addEventListener('resize',()=>map.invalidateSize());
 window.addEventListener('pageshow',()=>map.invalidateSize());
-window.addEventListener('offline',()=>showUnavailable('⚠️ Questo dispositivo è offline. Posizione non verificabile.'));
+window.addEventListener('offline',()=>showLastKnown('⚠️ Questo dispositivo è offline. Posizione non verificabile.'));
 window.addEventListener('online',()=>{if(lastData)display(lastData);else{status.className='';status.textContent='Connessione ripristinata. Attendo la posizione…'}});
 function clearPosition(){if(marker){map.removeLayer(marker);marker=null}if(ring){map.removeLayer(ring);ring=null}}
 function showUnavailable(message){clearPosition();status.className='warning';status.textContent=message;}
+function validPosition(data){
+ const lat=Number(data?.latitude),lon=Number(data?.longitude);
+ return data?.hasFix===true&&Number.isFinite(lat)&&Number.isFinite(lon)&&lat>=-90&&lat<=90&&lon>=-180&&lon<=180?[lat,lon]:null;
+}
+function showPosition(data,stale=false){
+ const pos=validPosition(data);
+ if(!pos){clearPosition();return}
+ const accuracy=Math.max(0,Number(data.accuracyMeters)||0);
+ if(!marker){marker=L.circleMarker(pos,{radius:9,color:stale?'#a35a16':'#fff',weight:3,fillColor:stale?'#e58b28':'#2876ba',fillOpacity:1}).addTo(map)}
+ else{marker.setLatLng(pos)}
+ marker.setStyle({color:stale?'#a35a16':'#fff',fillColor:stale?'#e58b28':'#2876ba',fillOpacity:1});
+ if(!stale){
+  if(!ring){ring=L.circle(pos,{radius:accuracy,color:'#2e7461',fillOpacity:.1}).addTo(map)}
+  else{ring.setLatLng(pos).setRadius(accuracy)}
+ }else if(ring){map.removeLayer(ring);ring=null}
+ if(!hasCenteredOnPosition){map.setView(pos,15);hasCenteredOnPosition=true;requestAnimationFrame(()=>map.invalidateSize())}
+}
+function showLastKnown(message){
+ const data=lastData;
+ if(!data||!validPosition(data)){showUnavailable(message);return}
+ showPosition(data,true);
+ status.className='warning';
+ status.textContent=message+' · Il punto arancione indica soltanto l’ultima posizione conosciuta, non quella attuale.';
+}
 function display(data){
  lastData=data;
- if(!navigator.onLine){showUnavailable('⚠️ Questo dispositivo è offline. Posizione non verificabile.');return}
+ if(!navigator.onLine){showLastKnown('⚠️ Questo dispositivo è offline. Posizione non verificabile.');return}
  const expiry=data.expiresAt?.toMillis?.()||0;
- if(!data.active||expiry<=Date.now()){showUnavailable('Condivisione scaduta o interrotta.');return}
+ if(!data.active||expiry<=Date.now()){lastData=null;showUnavailable('Condivisione scaduta o interrotta.');return}
  if(!data.hasFix){showUnavailable('In attesa di una posizione GPS affidabile…');return}
- const age=Date.now()-(data.updatedAt?.toMillis?.()||0);
  const timestamp=data.updatedAt?.toMillis?.();
  if(!timestamp){showUnavailable('Data GPS non disponibile.');return}
  const when=new Date(timestamp).toLocaleString('it-IT');
- const accuracy=Number(data.accuracyMeters)||0;
- const stale=age>90000;
- if(stale){showUnavailable('⚠️ Posizione non aggiornata dal '+when+'. Il telefono potrebbe essere offline.');return}
+ const age=Date.now()-timestamp;
+ if(age>90000){showLastKnown('⚠️ Posizione non aggiornata dal '+when+'. Il telefono potrebbe essere offline.');return}
  status.className='';
- status.textContent='Ultima posizione: '+when+' · precisione ±'+Math.round(accuracy)+' m';
- const pos=[data.latitude,data.longitude];
- if(!Number.isFinite(pos[0])||!Number.isFinite(pos[1])){showUnavailable('Coordinate GPS non valide.');return}
- if(!marker){marker=L.marker(pos).addTo(map);ring=L.circle(pos,{radius:accuracy,color:'#2e7461',fillOpacity:.1}).addTo(map);map.setView(pos,15);requestAnimationFrame(()=>map.invalidateSize())}
- else{marker.setLatLng(pos);ring.setLatLng(pos).setRadius(accuracy)}
+ status.textContent='Ultima posizione: '+when+' · precisione ±'+Math.round(Number(data.accuracyMeters)||0)+' m';
+ showPosition(data,false);
 }
 try{
  await signInAnonymously(getAuth(app));
  onSnapshot(doc(getFirestore(app),'liveSessions',id),
    snapshot=>{
-     if(snapshot.metadata.fromCache){showUnavailable('⚠️ Connessione al server non verificata. La posizione potrebbe non essere aggiornata.');return}
+     if(snapshot.metadata.fromCache){showLastKnown('⚠️ Connessione al server non verificata. La posizione potrebbe non essere aggiornata.');return}
      if(!snapshot.exists()){lastData=null;showUnavailable('Condivisione terminata o link non più valido.');return}
      display(snapshot.data());
    },
@@ -79,7 +98,7 @@ try{
      if(error.code==='permission-denied'||error.code==='not-found'){
        showUnavailable('Condivisione terminata, scaduta oppure link non valido.');
      }else{
-       showUnavailable('Impossibile verificare la posizione. Controlla la connessione e riprova.');
+       showLastKnown('Impossibile verificare la posizione. Controlla la connessione e riprova.');
      }
    });
  setInterval(()=>{if(lastData)display(lastData)},30000);
