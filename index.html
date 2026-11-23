@@ -40,6 +40,7 @@ function display(data){
  const when=new Date(timestamp).toLocaleString('it-IT');
  const accuracy=Number(data.accuracyMeters)||0;
  const stale=age>90000;
+ if(stale){showUnavailable('⚠️ Posizione non aggiornata dal '+when+'. Il telefono potrebbe essere offline.');return}
  status.className=stale?'warning':'';
  status.textContent=(stale?'⚠️ Posizione non aggiornata. Ultimo dato: ':'Ultima posizione: ')+when+' · precisione ±'+Math.round(accuracy)+' m';
  const pos=[data.latitude,data.longitude];
