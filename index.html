@@ -94,8 +94,8 @@ try{
      display(snapshot.data());
    },
    error=>{
-     lastData=null;
      if(error.code==='permission-denied'||error.code==='not-found'){
+       lastData=null;
        showUnavailable('Condivisione terminata, scaduta oppure link non valido.');
      }else{
        showLastKnown('Impossibile verificare la posizione. Controlla la connessione e riprova.');
