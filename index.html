@@ -42,10 +42,13 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribu
 let marker=null,ring=null,lastData=null;
 window.addEventListener('resize',()=>map.invalidateSize());
 window.addEventListener('pageshow',()=>map.invalidateSize());
+window.addEventListener('offline',()=>showUnavailable('⚠️ Questo dispositivo è offline. Posizione non verificabile.'));
+window.addEventListener('online',()=>{if(lastData)display(lastData);else{status.className='';status.textContent='Connessione ripristinata. Attendo la posizione…'}});
 function clearPosition(){if(marker){map.removeLayer(marker);marker=null}if(ring){map.removeLayer(ring);ring=null}}
 function showUnavailable(message){clearPosition();status.className='warning';status.textContent=message;}
 function display(data){
  lastData=data;
+ if(!navigator.onLine){showUnavailable('⚠️ Questo dispositivo è offline. Posizione non verificabile.');return}
  const expiry=data.expiresAt?.toMillis?.()||0;
  if(!data.active||expiry<=Date.now()){showUnavailable('Condivisione scaduta o interrotta.');return}
  if(!data.hasFix){showUnavailable('In attesa di una posizione GPS affidabile…');return}
@@ -56,8 +59,8 @@ function display(data){
  const accuracy=Number(data.accuracyMeters)||0;
  const stale=age>90000;
  if(stale){showUnavailable('⚠️ Posizione non aggiornata dal '+when+'. Il telefono potrebbe essere offline.');return}
- status.className=stale?'warning':'';
- status.textContent=(stale?'⚠️ Posizione non aggiornata. Ultimo dato: ':'Ultima posizione: ')+when+' · precisione ±'+Math.round(accuracy)+' m';
+ status.className='';
+ status.textContent='Ultima posizione: '+when+' · precisione ±'+Math.round(accuracy)+' m';
  const pos=[data.latitude,data.longitude];
  if(!Number.isFinite(pos[0])||!Number.isFinite(pos[1])){showUnavailable('Coordinate GPS non valide.');return}
  if(!marker){marker=L.marker(pos).addTo(map);ring=L.circle(pos,{radius:accuracy,color:'#2e7461',fillOpacity:.1}).addTo(map);map.setView(pos,15);requestAnimationFrame(()=>map.invalidateSize())}
@@ -66,8 +69,19 @@ function display(data){
 try{
  await signInAnonymously(getAuth(app));
  onSnapshot(doc(getFirestore(app),'liveSessions',id),
-   snapshot=>{if(!snapshot.exists()){lastData=null;showUnavailable('Condivisione terminata o link non valido.');return}display(snapshot.data())},
-   ()=>{lastData=null;showUnavailable('Posizione non disponibile. Controlla il link o riprova.')});
+   snapshot=>{
+     if(snapshot.metadata.fromCache){showUnavailable('⚠️ Connessione al server non verificata. La posizione potrebbe non essere aggiornata.');return}
+     if(!snapshot.exists()){lastData=null;showUnavailable('Condivisione terminata o link non più valido.');return}
+     display(snapshot.data());
+   },
+   error=>{
+     lastData=null;
+     if(error.code==='permission-denied'||error.code==='not-found'){
+       showUnavailable('Condivisione terminata, scaduta oppure link non valido.');
+     }else{
+       showUnavailable('Impossibile verificare la posizione. Controlla la connessione e riprova.');
+     }
+   });
  setInterval(()=>{if(lastData)display(lastData)},30000);
 }catch(e){showUnavailable('Impossibile collegarsi a Firebase.')}
 </script></body></html>
